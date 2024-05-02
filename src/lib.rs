@@ -2,78 +2,98 @@ use std::{marker::PhantomData, mem::offset_of, ptr::NonNull};
 
 pub use intrusive_collections;
 
-use intrusive_collections::{
-    xor_linked_list::XorLinkedListOps, DefaultLinkOps, XorLinkedListAtomicLink,
-};
+use intrusive_collections::DefaultLinkOps;
 
-pub struct LinkedListDynLink<D: ?Sized> {
-    link: XorLinkedListAtomicLink,
-    get_value: unsafe fn(link: NonNull<LinkedListDynLink<D>>) -> *const D,
+pub struct LinkedListDynLink<L, D: ?Sized> {
+    link: L,
+    get_value: unsafe fn(link: NonNull<LinkedListDynLink<L, D>>) -> *const D,
 }
 
-impl<D: ?Sized> LinkedListDynLink<D> {
-    pub const fn new<L: DynAdaptor<D>>() -> Self {
+impl<L: Default, D: ?Sized> LinkedListDynLink<L, D> {
+    pub fn new<A: DynAdaptor<L, D>>() -> Self {
         LinkedListDynLink {
-            link: XorLinkedListAtomicLink::new(),
-            get_value: L::get_value,
+            link: L::default(),
+            get_value: A::get_value,
         }
     }
+}
 
+impl<L, D: ?Sized> LinkedListDynLink<L, D> {
     #[inline]
-    fn to_link(ptr: NonNull<Self>) -> NonNull<XorLinkedListAtomicLink> {
-        let offset = offset_of!(LinkedListDynLink::<D>, link);
+    fn to_link(ptr: NonNull<Self>) -> NonNull<L> {
+        let offset = offset_of!(LinkedListDynLink::<L, D>, link);
         unsafe { NonNull::new_unchecked(ptr.as_ptr().byte_add(offset).cast()) }
     }
 
     #[inline]
-    fn from_link(link: NonNull<XorLinkedListAtomicLink>) -> NonNull<Self> {
-        let offset = offset_of!(LinkedListDynLink::<D>, link);
+    fn from_link(link: NonNull<L>) -> NonNull<Self> {
+        let offset = offset_of!(LinkedListDynLink::<L, D>, link);
         unsafe { NonNull::new_unchecked(link.as_ptr().byte_sub(offset).cast()) }
     }
 }
 
-impl<D: ?Sized> DefaultLinkOps for LinkedListDynLink<D> {
-    type Ops = LinkedListDynLinkOps<D>;
+impl<L: DefaultLinkOps, D: ?Sized> DefaultLinkOps for LinkedListDynLink<L, D>
+where
+    L::Ops: intrusive_collections::LinkOps<LinkPtr = NonNull<L>>,
+{
+    type Ops = LinkedListDynLinkOps<L, D>;
 
     const NEW: Self::Ops = LinkedListDynLinkOps {
-        ops: <XorLinkedListAtomicLink as intrusive_collections::DefaultLinkOps>::NEW,
+        ops: <L as intrusive_collections::DefaultLinkOps>::NEW,
         d: PhantomData,
     };
 }
 
-pub struct LinkedListDynLinkOps<D: ?Sized> {
-    ops: intrusive_collections::xor_linked_list::AtomicLinkOps,
+pub struct LinkedListDynLinkOps<L: DefaultLinkOps, D: ?Sized> {
+    ops: L::Ops,
     d: PhantomData<D>,
 }
 
-impl<D: ?Sized> Copy for LinkedListDynLinkOps<D> {}
-impl<D: ?Sized> Clone for LinkedListDynLinkOps<D> {
+impl<L: DefaultLinkOps, D: ?Sized> Copy for LinkedListDynLinkOps<L, D> where L::Ops: Copy {}
+impl<L: DefaultLinkOps, D: ?Sized> Clone for LinkedListDynLinkOps<L, D>
+where
+    L::Ops: Copy,
+{
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<D: ?Sized> Default for LinkedListDynLinkOps<D> {
+impl<L: DefaultLinkOps, D: ?Sized> Default for LinkedListDynLinkOps<L, D>
+where
+    L::Ops: intrusive_collections::LinkOps<LinkPtr = NonNull<L>>,
+{
     fn default() -> Self {
-        <LinkedListDynLink<D> as DefaultLinkOps>::NEW
+        <LinkedListDynLink<L, D> as DefaultLinkOps>::NEW
     }
 }
 
-unsafe impl<D: ?Sized> intrusive_collections::LinkOps for LinkedListDynLinkOps<D> {
-    type LinkPtr = NonNull<LinkedListDynLink<D>>;
+unsafe impl<L: DefaultLinkOps, D: ?Sized> intrusive_collections::LinkOps
+    for LinkedListDynLinkOps<L, D>
+where
+    L::Ops: intrusive_collections::LinkOps<LinkPtr = NonNull<L>>,
+{
+    type LinkPtr = NonNull<LinkedListDynLink<L, D>>;
 
     #[inline]
     unsafe fn acquire_link(&mut self, ptr: Self::LinkPtr) -> bool {
-        self.ops.acquire_link(LinkedListDynLink::to_link(ptr))
+        self.ops
+            .acquire_link(LinkedListDynLink::<L, D>::to_link(ptr))
     }
 
     #[inline]
     unsafe fn release_link(&mut self, ptr: Self::LinkPtr) {
-        self.ops.release_link(LinkedListDynLink::to_link(ptr))
+        self.ops
+            .release_link(LinkedListDynLink::<L, D>::to_link(ptr))
     }
 }
 
-unsafe impl<D: ?Sized> XorLinkedListOps for LinkedListDynLinkOps<D> {
+unsafe impl<L: DefaultLinkOps, D: ?Sized> intrusive_collections::xor_linked_list::XorLinkedListOps
+    for LinkedListDynLinkOps<L, D>
+where
+    L::Ops: intrusive_collections::LinkOps<LinkPtr = NonNull<L>>
+        + intrusive_collections::xor_linked_list::XorLinkedListOps,
+{
     #[inline]
     unsafe fn next(
         &self,
@@ -131,18 +151,18 @@ unsafe impl<D: ?Sized> XorLinkedListOps for LinkedListDynLinkOps<D> {
     }
 }
 
-pub unsafe trait DynAdaptor<D: ?Sized> {
+pub unsafe trait DynAdaptor<L, D: ?Sized> {
     /// Gets a reference to the link for the given object.
     ///
     /// # Safety
     ///
     /// `value` must be a valid pointer.
-    unsafe fn get_link(value: *const Self) -> NonNull<LinkedListDynLink<D>>;
+    unsafe fn get_link(value: *const Self) -> NonNull<LinkedListDynLink<L, D>>;
 
     /// Gets a reference to an object from a reference to a link in that object.
     ///
     /// # Safety
     ///
     /// `link` must be a valid pointer previously returned by `get_link`.
-    unsafe fn get_value(ptr: NonNull<LinkedListDynLink<D>>) -> *const D;
+    unsafe fn get_value(ptr: NonNull<LinkedListDynLink<L, D>>) -> *const D;
 }
