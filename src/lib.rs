@@ -1,3 +1,5 @@
+#![feature(arbitrary_self_types)]
+
 use std::{
     marker::PhantomData,
     mem::offset_of,
@@ -93,164 +95,6 @@ pub unsafe trait DynAdaptor<A: Adapter> {
     ) -> *const <A::PointerOps as PointerOps>::Value;
 }
 
-// /// Macro to generate an implementation of `Adapter` and `DynAdaptor` for a given set of types.
-// /// In particular this will automatically generate implementations of the
-// /// `get_value` and `get_link` methods for a given named field in a struct.
-// ///
-// /// The basic syntax to create an adapter is:
-// ///
-// /// ```rust,ignore
-// /// intrusive_dyn_adapter!(Adapter = Pointer: Value { link_field: LinkType });
-// /// ```
-// ///
-// /// You can create a new instance of an adapter using the `new` method or the
-// /// `NEW` associated constant. The adapter also implements the `Default` trait.
-// ///
-// /// # Generics
-// ///
-// /// This macro supports generic arguments:
-// ///
-// /// ```rust,ignore
-// /// intrusive_dyn_adapter!(
-// ///     Adapter<'lifetime, Type, Type2> =
-// ///         Pointer: Value {
-// ///             link_field: LinkType
-// ///         }
-// ///         where
-// ///             Type: Copy,
-// ///             Type2: ?Sized + 'lifetime
-// ///     );
-// /// ```
-// ///
-// /// Note that due to macro parsing limitations, `T: Trait` bounds are not
-// /// supported in the generic argument list. You must list any trait bounds in
-// /// a separate `where` clause at the end of the macro.
-// ///
-// /// # Examples
-// ///
-// /// ```
-// /// use intrusive_collections::{LinkedListLink, RBTreeLink};
-// /// use intrusive_collections_dyn::intrusive_dyn_adapter;
-// ///
-// /// pub struct Test {
-// ///     link: LinkedListLink,
-// ///     link2: RBTreeLink,
-// /// }
-// /// intrusive_dyn_adapter!(MyAdapter = Box<Test>: Test { link: LinkedListLink });
-// /// intrusive_dyn_adapter!(pub MyAdapter2 = Box<Test>: Test { link2: RBTreeLink });
-// /// intrusive_dyn_adapter!(pub(crate) MyAdapter3 = Box<Test>: Test { link2: RBTreeLink });
-// ///
-// /// pub struct Test2<T>
-// ///     where T: Clone + ?Sized
-// /// {
-// ///     link: LinkedListLink,
-// ///     val: T,
-// /// }
-// /// intrusive_dyn_adapter!(MyAdapter4<'a, T> = &'a Test2<T>: Test2<T> { link: LinkedListLink } where T: ?Sized + Clone + 'a);
-// /// ```
-// #[macro_export]
-// macro_rules! intrusive_dyn_adapter2 {
-//     (@impl
-//         $(#[$attr:meta])* $vis:vis $name:ident ($($args:tt),*)
-//         = $pointer:ty: $value:path { $field:ident: $link:ty } $($where_:tt)*
-//     ) => {
-//         #[allow(explicit_outlives_requirements)]
-//         $(#[$attr])*
-//         $vis struct $name<$($args),*> $($where_)* {
-//             link_ops: <$link as $crate::intrusive_collections::DefaultLinkOps>::Ops,
-//             pointer_ops: $crate::intrusive_collections::DefaultPointerOps<$pointer>,
-//         }
-//         unsafe impl<$($args),*> Send for $name<$($args),*> $($where_)* {}
-//         unsafe impl<$($args),*> Sync for $name<$($args),*> $($where_)* {}
-//         impl<$($args),*> Copy for $name<$($args),*> $($where_)* {}
-//         impl<$($args),*> Clone for $name<$($args),*> $($where_)* {
-//             #[inline]
-//             fn clone(&self) -> Self {
-//                 *self
-//             }
-//         }
-//         impl<$($args),*> Default for $name<$($args),*> $($where_)* {
-//             #[inline]
-//             fn default() -> Self {
-//                 Self::NEW
-//             }
-//         }
-//         #[allow(dead_code)]
-//         impl<$($args),*> $name<$($args),*> $($where_)* {
-//             pub const NEW: Self = $name {
-//                 link_ops: <$link as $crate::intrusive_collections::DefaultLinkOps>::NEW,
-//                 pointer_ops: $crate::intrusive_collections::DefaultPointerOps::<$pointer>::new(),
-//             };
-//             #[inline]
-//             pub fn new() -> Self {
-//                 Self::NEW
-//             }
-//         }
-//         #[allow(dead_code, unsafe_code)]
-//         unsafe impl<$($args),*> $crate::intrusive_collections::Adapter for $name<$($args),*> $($where_)* {
-//             type LinkOps = <$link as $crate::intrusive_collections::DefaultLinkOps>::Ops;
-//             type PointerOps = $crate::intrusive_collections::DefaultPointerOps<$pointer>;
-
-//             #[inline]
-//             unsafe fn get_value(&self, link: <Self::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr) -> *const <Self::PointerOps as $crate::intrusive_collections::PointerOps>::Value {
-//                 $crate::intrusive_collections::container_of!(link.as_ptr(), $value, $field)
-//             }
-//             #[inline]
-//             unsafe fn get_link(&self, value: *const <Self::PointerOps as $crate::intrusive_collections::PointerOps>::Value) -> <Self::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr {
-//                 // We need to do this instead of just accessing the field directly
-//                 // to strictly follow the stack borrow rules.
-//                 let ptr = (value as *const u8).add($crate::intrusive_collections::offset_of!($value, $field));
-//                 core::ptr::NonNull::new_unchecked(ptr as *mut _)
-//             }
-//             #[inline]
-//             fn link_ops(&self) -> &Self::LinkOps {
-//                 &self.link_ops
-//             }
-//             #[inline]
-//             fn link_ops_mut(&mut self) -> &mut Self::LinkOps {
-//                 &mut self.link_ops
-//             }
-//             #[inline]
-//             fn pointer_ops(&self) -> &Self::PointerOps {
-//                 &self.pointer_ops
-//             }
-//         }
-//     };
-//     (@find_generic
-//         $(#[$attr:meta])* $vis:vis $name:ident ($($prev:tt)*) > $($rest:tt)*
-//     ) => {
-//         intrusive_adapter!(@impl
-//             $(#[$attr])* $vis $name ($($prev)*) $($rest)*
-//         );
-//     };
-//     (@find_generic
-//         $(#[$attr:meta])* $vis:vis $name:ident ($($prev:tt)*) $cur:tt $($rest:tt)*
-//     ) => {
-//         intrusive_adapter!(@find_generic
-//             $(#[$attr])* $vis $name ($($prev)* $cur) $($rest)*
-//         );
-//     };
-//     (@find_if_generic
-//         $(#[$attr:meta])* $vis:vis $name:ident < $($rest:tt)*
-//     ) => {
-//         intrusive_adapter!(@find_generic
-//             $(#[$attr])* $vis $name () $($rest)*
-//         );
-//     };
-//     (@find_if_generic
-//         $(#[$attr:meta])* $vis:vis $name:ident $($rest:tt)*
-//     ) => {
-//         intrusive_adapter!(@impl
-//             $(#[$attr])* $vis $name () $($rest)*
-//         );
-//     };
-//     ($(#[$attr:meta])* $vis:vis $name:ident $($rest:tt)*) => {
-//         intrusive_adapter!(@find_if_generic
-//             $(#[$attr])* $vis $name $($rest)*
-//         );
-//     };
-// }
-
 /// Macro to generate an implementation of `Adapter` and `DynAdaptor` for a given set of types.
 /// In particular this will automatically generate implementations of the
 /// `get_value` and `get_link` methods for a given named field in a struct.
@@ -297,24 +141,89 @@ pub unsafe trait DynAdaptor<A: Adapter> {
 /// pub trait DynTrait {}
 /// impl DynTrait for Test {}
 ///
-/// intrusive_dyn_adapter!(MyAdapter = Test: Test { link: LinkedListLink });
-/// intrusive_dyn_adapter!(pub MyAdapter2 = Test: Test { link2: RBTreeLink });
-/// intrusive_dyn_adapter!(pub(crate) MyAdapter3 = Test: Test { link2: RBTreeLink });
+/// intrusive_dyn_adapter!(MyAdapter = Arc<Test> as Arc<dyn DynTrait>: Test { link: LinkedListLink });
+/// intrusive_dyn_adapter!(pub MyAdapter2 = Arc<Test> as Arc<dyn DynTrait>: Test { link2: RBTreeLink });
 /// ```
 #[macro_export]
 macro_rules! intrusive_dyn_adapter {
     (@impl
-        $(#[$attr:meta])* $vis:vis $name:ident ($($args:tt),*)
-        = $pointer:ty: $value:path { $field:ident: $link:ty } $($where_:tt)*
+        $(#[$attr:meta])* $vis:vis $name:ident
+        = ($($args:tt),*) $data:ty as $dyn_pointer:ty:
+        $value:path { $field:ident: $link:ty }
+        $($where_:tt)*
     ) => {
-        #[allow(dead_code, unsafe_code)]
-        unsafe impl<$($args),*> $crate::DynAdaptor<A> for $name<$($args),*> $($where_)* {
+        #[allow(explicit_outlives_requirements)]
+        $(#[$attr])*
+        $vis struct $name $($where_)* {
+            link_ops: <$link as $crate::intrusive_collections::DefaultLinkOps>::Ops,
+            pointer_ops: $crate::intrusive_collections::DefaultPointerOps<$dyn_pointer>,
+        }
+        unsafe impl Send for $name $($where_)* {}
+        unsafe impl Sync for $name $($where_)* {}
+        impl Copy for $name $($where_)* {}
+        impl Clone for $name $($where_)* {
             #[inline]
-            unsafe fn get_value(link: <Self::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr) -> *const <Self::PointerOps as $crate::intrusive_collections::PointerOps>::Value {
-                $crate::intrusive_collections::container_of!(link.as_ptr(), $value, $field)
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl Default for $name $($where_)* {
+            #[inline]
+            fn default() -> Self {
+                Self::NEW
+            }
+        }
+        #[allow(dead_code)]
+        impl $name $($where_)* {
+            pub const NEW: Self = $name {
+                link_ops: <$link as $crate::intrusive_collections::DefaultLinkOps>::NEW,
+                pointer_ops: $crate::intrusive_collections::DefaultPointerOps::<$dyn_pointer>::new(),
+            };
+            #[inline]
+            pub fn new() -> Self {
+                Self::NEW
+            }
+        }
+        #[allow(dead_code, unsafe_code)]
+        unsafe impl $crate::intrusive_collections::Adapter for $name $($where_)* {
+            type LinkOps = <$link as $crate::intrusive_collections::DefaultLinkOps>::Ops;
+            type PointerOps = $crate::intrusive_collections::DefaultPointerOps<$dyn_pointer>;
+
+            #[inline]
+            unsafe fn get_value(&self, link: <Self::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr) -> *const <Self::PointerOps as $crate::intrusive_collections::PointerOps>::Value {
+                $crate::LinkedListDynLink::get_dyn_value(link)
             }
             #[inline]
-            unsafe fn get_link(value: *const <Self::PointerOps as $crate::intrusive_collections::PointerOps>::Value) -> <Self::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr {
+            unsafe fn get_link(&self, value: *const <Self::PointerOps as $crate::intrusive_collections::PointerOps>::Value) -> <Self::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr {
+                value.get_link()
+            }
+            #[inline]
+            fn link_ops(&self) -> &Self::LinkOps {
+                &self.link_ops
+            }
+            #[inline]
+            fn link_ops_mut(&mut self) -> &mut Self::LinkOps {
+                &mut self.link_ops
+            }
+            #[inline]
+            fn pointer_ops(&self) -> &Self::PointerOps {
+                &self.pointer_ops
+            }
+        }
+
+        #[allow(dead_code, unsafe_code)]
+        unsafe impl <$($args),*> $crate::DynAdaptor<$name> for $data $($where_)* {
+            #[inline]
+            unsafe fn get_value(
+                link: <<$name as $crate::intrusive_collections::Adapter>::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr
+            ) -> *const <<$name as $crate::intrusive_collections::Adapter>::PointerOps as $crate::intrusive_collections::PointerOps>::Value {
+                link.as_ptr().cast_const().byte_sub($crate::intrusive_collections::offset_of!($value, $field))
+                    as *const $value as *const _
+            }
+            #[inline]
+            unsafe fn get_link(
+                value: *const <<$name as $crate::intrusive_collections::Adapter>::PointerOps as $crate::intrusive_collections::PointerOps>::Value
+            ) -> <<$name as $crate::intrusive_collections::Adapter>::LinkOps as $crate::intrusive_collections::LinkOps>::LinkPtr {
                 // We need to do this instead of just accessing the field directly
                 // to strictly follow the stack borrow rules.
                 let ptr = (value as *const u8).add($crate::intrusive_collections::offset_of!($value, $field));
@@ -323,36 +232,62 @@ macro_rules! intrusive_dyn_adapter {
         }
     };
     (@find_generic
-        $(#[$attr:meta])* $vis:vis $name:ident ($($prev:tt)*) > $($rest:tt)*
+        $(#[$attr:meta])* $vis:vis $name:ident = ($($prev:tt)*) > $($rest:tt)*
     ) => {
         intrusive_dyn_adapter!(@impl
             $(#[$attr])* $vis $name ($($prev)*) $($rest)*
         );
     };
     (@find_generic
-        $(#[$attr:meta])* $vis:vis $name:ident ($($prev:tt)*) $cur:tt $($rest:tt)*
+        $(#[$attr:meta])* $vis:vis $name:ident = ($($prev:tt)*) $cur:tt $($rest:tt)*
     ) => {
         intrusive_dyn_adapter!(@find_generic
             $(#[$attr])* $vis $name ($($prev)* $cur) $($rest)*
         );
     };
     (@find_if_generic
-        $(#[$attr:meta])* $vis:vis $name:ident < $($rest:tt)*
+        $(#[$attr:meta])* $vis:vis $name:ident = for < $($rest:tt)*
     ) => {
         intrusive_dyn_adapter!(@find_generic
-            $(#[$attr])* $vis $name () $($rest)*
+            $(#[$attr])* $vis $name = () $($rest)*
         );
     };
     (@find_if_generic
-        $(#[$attr:meta])* $vis:vis $name:ident $($rest:tt)*
+        $(#[$attr:meta])* $vis:vis $name:ident = $($rest:tt)*
     ) => {
         intrusive_dyn_adapter!(@impl
-            $(#[$attr])* $vis $name () $($rest)*
+            $(#[$attr])* $vis $name = () $($rest)*
         );
     };
-    ($(#[$attr:meta])* $vis:vis $name:ident $($rest:tt)*) => {
+    ($(#[$attr:meta])* $vis:vis $name:ident = $($rest:tt)*) => {
         intrusive_dyn_adapter!(@find_if_generic
-            $(#[$attr])* $vis $name $($rest)*
+            $(#[$attr])* $vis $name = $($rest)*
         );
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ptr::NonNull, sync::Arc};
+
+    use crate::linked_list::AtomicDynLink;
+    use crate::{intrusive_dyn_adapter, DynAdaptor};
+
+    pub struct Test {
+        link: AtomicDynLink<dyn DynTrait>,
+        // link2: RBTreeLink,
+    }
+    pub trait DynTrait {
+        unsafe fn get_link(self: *const Self) -> NonNull<AtomicDynLink<dyn DynTrait>>;
+    }
+    impl DynTrait for Test {
+        unsafe fn get_link(self: *const Self) -> NonNull<AtomicDynLink<dyn DynTrait>> {
+            <Self as DynAdaptor<MyAdapter>>::get_link(self)
+        }
+    }
+
+    intrusive_dyn_adapter!(MyAdapter = Test as Arc<dyn DynTrait>: Test { link: AtomicDynLink<dyn DynTrait> });
+
+    #[test]
+    fn happy() {}
 }
